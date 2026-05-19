@@ -891,6 +891,20 @@
       <div class="info-text">لو العميل فاصل وسيدفع مبلغ مختلف — اكتبه هنا</div>
     </div>
 
+    <div class="form-group" style="margin-top:8px;">
+      <label>📅 <span class="optional-tag">(اختياري)</span>تعديل تاريخ المعاملة</label>
+      <div id="nc-date-locked" style="display:flex;align-items:center;gap:10px;">
+        <div style="background:var(--dark3);border:1px solid rgba(201,168,76,0.1);padding:10px 16px;flex:1;font-size:13px;color:var(--text-muted);border-radius:2px;">
+          🔒 التاريخ الحالي (اليوم) — اضغط لتعديل تاريخ قديم
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="unlockDate('nc')" style="margin-top:0;white-space:nowrap;">🔓 تعديل</button>
+      </div>
+      <div id="nc-date-unlocked" style="display:none;">
+        <input type="date" id="nc-custom-date" style="margin-top:8px;">
+        <div class="info-text" style="color:var(--red);">⚠️ هتغير تاريخ التسجيل — تأكد إن ده صح</div>
+      </div>
+    </div>
+
     <button class="btn" style="margin-top:20px;" onclick="submitNewCustomer()" data-ar="✅ تسجيل العميل والمشتريات" data-en="✅ Register Customer & Purchase">✅ تسجيل العميل والمشتريات</button>
   </div>
 </div>
@@ -952,6 +966,20 @@
       <div class="info-text">لو العميل فاصل وسيدفع مبلغ مختلف — اكتبه هنا</div>
     </div>
 
+    <div class="form-group" style="margin-top:8px;">
+      <label>📅 <span class="optional-tag">(اختياري)</span>تعديل تاريخ المعاملة</label>
+      <div id="sale-date-locked" style="display:flex;align-items:center;gap:10px;">
+        <div style="background:var(--dark3);border:1px solid rgba(201,168,76,0.1);padding:10px 16px;flex:1;font-size:13px;color:var(--text-muted);border-radius:2px;">
+          🔒 التاريخ الحالي (اليوم) — اضغط لتعديل تاريخ قديم
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="unlockDate('sale')" style="margin-top:0;white-space:nowrap;">🔓 تعديل</button>
+      </div>
+      <div id="sale-date-unlocked" style="display:none;">
+        <input type="date" id="sale-custom-date" style="margin-top:8px;">
+        <div class="info-text" style="color:var(--red);">⚠️ هتغير تاريخ التسجيل — تأكد إن ده صح</div>
+      </div>
+    </div>
+
     <button class="btn" style="margin-top:16px;" onclick="submitSale()" data-ar="✅ تسجيل المشتريات" data-en="✅ Register Purchase">✅ تسجيل المشتريات</button>
   </div>
 </div>
@@ -993,6 +1021,23 @@
     </div>
 
     <div id="historyStats" style="margin-top:20px;display:flex;gap:16px;flex-wrap:wrap;"></div>
+  </div>
+</div>
+
+<!-- ================================ -->
+<!-- DATE UNLOCK MODAL -->
+<!-- ================================ -->
+<div class="modal-overlay" id="dateModal">
+  <div class="modal">
+    <h3>🔓 تعديل التاريخ</h3>
+    <p>ادخل كلمة سر التعديل (2026) عشان تقدر تغير التاريخ</p>
+    <div class="form-group">
+      <input type="password" id="datePassword" placeholder="كلمة السر" onkeydown="if(event.key==='Enter') confirmDateUnlock()">
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-outline" onclick="closeDateModal()">إلغاء</button>
+      <button class="btn" onclick="confirmDateUnlock()">تأكيد</button>
+    </div>
   </div>
 </div>
 
@@ -1225,6 +1270,8 @@ async function submitNewCustomer() {
 
   const finalAmount = price - (price * discount / 100);
   const now = new Date();
+  const customDate = getCustomDate('nc');
+  const txDate = customDate ? new Date(customDate) : now;
 
   const paidInput = parseFloat(document.getElementById('nc-paid').value) || null;
   const paidAmount = paidInput !== null ? paidInput : finalAmount;
@@ -1240,9 +1287,9 @@ async function submitNewCustomer() {
     discount,
     finalAmount,
     paidAmount,
-    date: now.toLocaleDateString('ar-EG'),
+    date: txDate.toLocaleDateString('ar-EG'),
     time: now.toLocaleTimeString('ar-EG'),
-    timestamp: now.toISOString(),
+    timestamp: txDate.toISOString(),
     isNewCustomer: true
   };
 
@@ -1324,6 +1371,8 @@ async function submitSale() {
 
   const finalAmount = price - (price * discount / 100);
   const now = new Date();
+  const customDate2 = getCustomDate('sale');
+  const txDate2 = customDate2 ? new Date(customDate2) : now;
 
   const paidInput2 = parseFloat(document.getElementById('sale-paid').value) || null;
   const paidAmount2 = paidInput2 !== null ? paidInput2 : finalAmount;
@@ -1336,9 +1385,9 @@ async function submitSale() {
     discount,
     finalAmount,
     paidAmount: paidAmount2,
-    date: now.toLocaleDateString('ar-EG'),
+    date: txDate2.toLocaleDateString('ar-EG'),
     time: now.toLocaleTimeString('ar-EG'),
-    timestamp: now.toISOString(),
+    timestamp: txDate2.toISOString(),
     isNewCustomer: false
   };
 
@@ -1358,12 +1407,10 @@ async function saveRecord(record) {
     const { collection, addDoc } = window.firestore;
     await addDoc(collection(window.db, 'transactions'), record);
 
-    // Try Google Sheets
     await sendToGoogleSheets(record);
 
     showToast(currentLang === 'ar' ? '✅ تم الحفظ بنجاح!' : '✅ Saved successfully!', 'success');
 
-    // Reset & go home
     setTimeout(() => {
       selectedCustomer = null;
       goTo('page-home');
@@ -1529,6 +1576,46 @@ function showToast(msg, type = '') {
   toast.textContent = msg;
   toast.className = 'toast ' + type + ' show';
   setTimeout(() => toast.className = 'toast ' + type, 3000);
+}
+
+// =============================================
+// DATE UNLOCK
+// =============================================
+let dateUnlockPrefix = null;
+
+function unlockDate(prefix) {
+  dateUnlockPrefix = prefix;
+  document.getElementById('datePassword').value = '';
+  document.getElementById('dateModal').classList.add('open');
+}
+
+function closeDateModal() {
+  dateUnlockPrefix = null;
+  document.getElementById('dateModal').classList.remove('open');
+}
+
+function confirmDateUnlock() {
+  const pw = document.getElementById('datePassword').value;
+  if (pw !== '2026') {
+    showToast('❌ كلمة السر غلط', 'error');
+    return;
+  }
+  closeDateModal();
+  const locked = document.getElementById(`${dateUnlockPrefix}-date-locked`);
+  const unlocked = document.getElementById(`${dateUnlockPrefix}-date-unlocked`);
+  if (locked) locked.style.display = 'none';
+  if (unlocked) unlocked.style.display = 'block';
+  // Set today as default
+  const input = document.getElementById(`${dateUnlockPrefix}-custom-date`);
+  if (input && !input.value) input.value = new Date().toISOString().split('T')[0];
+  showToast('✅ تم فتح تعديل التاريخ', 'success');
+}
+
+function getCustomDate(prefix) {
+  const unlocked = document.getElementById(`${prefix}-date-unlocked`);
+  if (!unlocked || unlocked.style.display === 'none') return null;
+  const val = document.getElementById(`${prefix}-custom-date`).value;
+  return val || null;
 }
 
 // =============================================
