@@ -885,7 +885,11 @@
       </div>
     </div>
 
-    <div class="sheet-notice warning" data-ar="⚠️ تأكد من إعداد Google Sheets أولاً لحفظ البيانات هناك" data-en="⚠️ Make sure to setup Google Sheets first to save data there">⚠️ تأكد من إعداد Google Sheets أولاً لحفظ البيانات هناك</div>
+    <div class="form-group" id="nc-paid-group" style="display:none;">
+      <label><span class="optional-tag">(اختياري)</span>المبلغ المدفوع فعلياً (جنيه)</label>
+      <input type="number" id="nc-paid" placeholder="اتركه فاضي لو نفس المبلغ النهائي" min="0">
+      <div class="info-text">لو العميل فاصل وسيدفع مبلغ مختلف — اكتبه هنا</div>
+    </div>
 
     <button class="btn" style="margin-top:20px;" onclick="submitNewCustomer()" data-ar="✅ تسجيل العميل والمشتريات" data-en="✅ Register Customer & Purchase">✅ تسجيل العميل والمشتريات</button>
   </div>
@@ -940,6 +944,12 @@
         <span data-ar="💳 المبلغ النهائي" data-en="💳 Final Amount">💳 المبلغ النهائي</span>
         <span class="val" id="sale-final">—</span>
       </div>
+    </div>
+
+    <div class="form-group" id="sale-paid-group" style="display:none;">
+      <label><span class="optional-tag">(اختياري)</span>المبلغ المدفوع فعلياً (جنيه)</label>
+      <input type="number" id="sale-paid" placeholder="اتركه فاضي لو نفس المبلغ النهائي" min="0">
+      <div class="info-text">لو العميل فاصل وسيدفع مبلغ مختلف — اكتبه هنا</div>
     </div>
 
     <button class="btn" style="margin-top:16px;" onclick="submitSale()" data-ar="✅ تسجيل المشتريات" data-en="✅ Register Purchase">✅ تسجيل المشتريات</button>
@@ -1011,13 +1021,24 @@
 // STATE
 // =============================================
 let currentLang = 'ar';
-let currentFlow = 'new'; // 'new' or 'existing'
+let currentFlow = 'new';
 let selectedEmployee = '';
 let selectedCustomer = null;
 let pageHistory = [];
 let deleteTargetId = null;
 let allTransactions = [];
-let employees = JSON.parse(localStorage.getItem('robica_employees') || '["أحمد","محمد","سارة","مريم"]');
+let employees = [];
+
+async function loadEmployees() {
+  if (!window.firebaseReady || !window.db) { setTimeout(loadEmployees, 500); return; }
+  try {
+    const { collection, getDocs } = window.firestore;
+    const snap = await getDocs(collection(window.db, 'employees'));
+    employees = [];
+    snap.forEach(d => employees.push({ id: d.id, name: d.data().name }));
+    renderEmployees();
+  } catch(e) { employees = []; renderEmployees(); }
+}
 
 // =============================================
 // LANGUAGE
@@ -1058,7 +1079,7 @@ function goTo(pageId, flow) {
   document.getElementById('backBtn').style.display = pageId === 'page-login' || pageId === 'page-home' ? 'none' : 'block';
 
   // Page-specific init
-  if (pageId === 'page-employee') renderEmployees();
+  if (pageId === 'page-employee') loadEmployees();
   if (pageId === 'page-history') loadHistory();
   if (pageId === 'page-existing-search') {
     document.getElementById('search-input').value = '';
@@ -1096,9 +1117,16 @@ function doLogin() {
 // =============================================
 function renderEmployees() {
   const list = document.getElementById('employeeList');
-  list.innerHTML = employees.map(emp =>
-    `<button class="employee-btn ${selectedEmployee === emp ? 'selected' : ''}" onclick="selectEmployee('${emp}')">${emp}</button>`
-  ).join('');
+  if (employees.length === 0) {
+    list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">لا يوجد موظفين — أضف موظف أولاً</div>';
+    return;
+  }
+  list.innerHTML = employees.map(emp => `
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button class="employee-btn ${selectedEmployee === emp.name ? 'selected' : ''}" onclick="selectEmployee('${emp.name}')">${emp.name}</button>
+      <button onclick="confirmDeleteEmployee('${emp.id}','${emp.name}')" style="background:transparent;border:1px solid rgba(192,57,43,0.3);color:var(--red);padding:6px 10px;border-radius:2px;cursor:pointer;font-size:13px;" title="حذف">🗑️</button>
+    </div>
+  `).join('');
 }
 
 function selectEmployee(name) {
@@ -1106,17 +1134,38 @@ function selectEmployee(name) {
   renderEmployees();
 }
 
-function addEmployee() {
+function confirmDeleteEmployee(id, name) {
+  if (!confirm('هتحذف الموظف "' + name + '" — متأكد؟')) return;
+  deleteEmployeeFromDB(id, name);
+}
+
+async function deleteEmployeeFromDB(id, name) {
+  if (!window.db) return;
+  try {
+    const { doc, deleteDoc } = window.firestore;
+    await deleteDoc(doc(window.db, 'employees', id));
+    employees = employees.filter(e => e.id !== id);
+    if (selectedEmployee === name) selectedEmployee = '';
+    renderEmployees();
+    showToast('🗑️ تم حذف الموظف', 'success');
+  } catch(e) { showToast('❌ ' + e.message, 'error'); }
+}
+
+async function addEmployee() {
   const input = document.getElementById('newEmployeeInput');
   const name = input.value.trim();
   if (!name) return;
-  if (!employees.includes(name)) {
-    employees.push(name);
-    localStorage.setItem('robica_employees', JSON.stringify(employees));
-  }
-  input.value = '';
-  selectEmployee(name);
-  renderEmployees();
+  if (!window.firebaseReady || !window.db) { showToast('Firebase غير متصل', 'error'); return; }
+  if (employees.find(e => e.name === name)) { showToast('الموظف موجود بالفعل', 'error'); return; }
+  try {
+    const { collection, addDoc } = window.firestore;
+    const docRef = await addDoc(collection(window.db, 'employees'), { name });
+    employees.push({ id: docRef.id, name });
+    input.value = '';
+    selectEmployee(name);
+    renderEmployees();
+    showToast('✅ تمت إضافة الموظف', 'success');
+  } catch(e) { showToast('❌ ' + e.message, 'error'); }
 }
 
 function confirmEmployee() {
@@ -1147,6 +1196,8 @@ function calcPrice(prefix) {
 
   if (price > 0) {
     display.style.display = 'block';
+    const paidGroup = document.getElementById(`${prefix}-paid-group`);
+    if (paidGroup) paidGroup.style.display = 'block';
     document.getElementById(`${prefix}-orig`).textContent = `${price.toLocaleString()} جنيه`;
     document.getElementById(`${prefix}-disc-val`).textContent = discount > 0 ? `- ${discAmt.toLocaleString()} جنيه (${discount}%)` : '—';
     document.getElementById(`${prefix}-final`).textContent = `${final.toLocaleString()} جنيه`;
@@ -1175,6 +1226,9 @@ async function submitNewCustomer() {
   const finalAmount = price - (price * discount / 100);
   const now = new Date();
 
+  const paidInput = parseFloat(document.getElementById('nc-paid').value) || null;
+  const paidAmount = paidInput !== null ? paidInput : finalAmount;
+
   const record = {
     customerName: name,
     phone,
@@ -1185,6 +1239,7 @@ async function submitNewCustomer() {
     originalPrice: price,
     discount,
     finalAmount,
+    paidAmount,
     date: now.toLocaleDateString('ar-EG'),
     time: now.toLocaleTimeString('ar-EG'),
     timestamp: now.toISOString(),
@@ -1270,6 +1325,9 @@ async function submitSale() {
   const finalAmount = price - (price * discount / 100);
   const now = new Date();
 
+  const paidInput2 = parseFloat(document.getElementById('sale-paid').value) || null;
+  const paidAmount2 = paidInput2 !== null ? paidInput2 : finalAmount;
+
   const record = {
     customerName: selectedCustomer.name,
     phone: selectedCustomer.phone,
@@ -1277,6 +1335,7 @@ async function submitSale() {
     originalPrice: price,
     discount,
     finalAmount,
+    paidAmount: paidAmount2,
     date: now.toLocaleDateString('ar-EG'),
     time: now.toLocaleTimeString('ar-EG'),
     timestamp: now.toISOString(),
@@ -1323,13 +1382,17 @@ async function saveRecord(record) {
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyVOZdGt1SaeFRLdKpWADpWox9Dx7bOtpcML-ZMhJ7mP-zQtbTq6rYREQPrZIBrOQ/exec';
 
 async function sendToGoogleSheets(record) {
-  if (GOOGLE_SCRIPT_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL') return; // Skip if not configured
+  if (GOOGLE_SCRIPT_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL') return;
   try {
     await fetch(GOOGLE_SCRIPT_URL, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(record)
+      body: JSON.stringify({
+        ...record,
+        sheetEmployee: record.employee,   // Apps Script will write to employee sheet
+        sheetCustomer: record.customerName // Apps Script will write to customer sheet
+      })
     });
   } catch(e) {
     console.warn('Google Sheets sync failed:', e);
@@ -1395,7 +1458,11 @@ function renderHistory(transactions) {
       <td dir="ltr">${t.phone || '—'}</td>
       <td>${t.employee || '—'}</td>
       <td style="font-size:11px;">${t.date || '—'}<br><span style="color:var(--text-muted)">${t.time || ''}</span></td>
-      <td><b style="color:var(--gold)">${(t.finalAmount || 0).toLocaleString()} ج</b>${t.discount > 0 ? `<br><span style="font-size:10px;color:var(--text-muted)">كان ${(t.originalPrice||0).toLocaleString()} (${t.discount}% خصم)</span>` : ''}</td>
+      <td>
+        <b style="color:var(--gold)">${(t.finalAmount || 0).toLocaleString()} ج</b>
+        ${t.discount > 0 ? `<br><span style="font-size:10px;color:var(--text-muted)">كان ${(t.originalPrice||0).toLocaleString()} (${t.discount}% خصم)</span>` : ''}
+        ${t.paidAmount && t.paidAmount !== t.finalAmount ? `<br><span style="font-size:11px;color:#27AE60;">✅ دفع: ${t.paidAmount.toLocaleString()} ج</span>` : ''}
+      </td>
       <td><span class="badge ${t.isNewCustomer ? 'badge-new' : 'badge-existing'}">${t.isNewCustomer ? 'جديد' : 'حالي'}</span></td>
       <td><button class="delete-btn" onclick="openDeleteModal('${t.id}')">🗑️</button></td>
     </tr>
@@ -1472,6 +1539,7 @@ document.addEventListener('firebaseReady', () => {
 });
 
 applyLang();
+loadEmployees();
 </script>
 </body>
 </html>
